@@ -37,11 +37,14 @@ type ImageItem = {
   aiPeople: string[] | null;
 };
 
+
+let cloudinaryfolder = "imageEcology";
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const skip = parseInt(url.searchParams.get("skip") || "0", 10);
   const limit = parseInt(url.searchParams.get("limit") || "10", 10);
-  const folder = url.searchParams.get("folder") || "imageEcology";
+  const folder = url.searchParams.get("folder") || cloudinaryfolder;
 
   // helper to pull from camelCase or snake_case
   const pick = (obj: any, kCamel: string, kSnake: string) =>
