@@ -1,4 +1,4 @@
 {
   "/page": "app/page.js",
-  "/api/cloudinary/recent/route": "app/api/cloudinary/recent/route.js"
+  "/api/generateImage/route": "app/api/generateImage/route.js"
 }

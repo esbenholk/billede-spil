@@ -383,6 +383,8 @@ export async function POST(request: Request) {
       "imageEcology/placeholders"
     );
 
+    console.log("uploaded to cloudinary temp folder", remixUrl);
+
     return NextResponse.json({
       remixedPrompt: finalPrompt,
       plan,
