@@ -31,19 +31,16 @@ export async function GET(request: Request) {
 
     console.log(element);
 
-    const response = await fetch(
-      `${process.env.BASE_URL}/api/cloudinary/upload`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          imageUrl: element.url,
-          title: element.title,
-        }),
-      }
-    );
+    const response = await fetch(`/api/cloudinary/upload`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        imageUrl: element.url,
+        title: element.title,
+      }),
+    });
   }
 
   return NextResponse.json(data);
