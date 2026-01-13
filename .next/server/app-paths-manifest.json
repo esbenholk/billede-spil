@@ -1,5 +1,4 @@
 {
-  "/api/cloudinary/recent/route": "app/api/cloudinary/recent/route.js",
-  "/api/generateAndUploadImage/route": "app/api/generateAndUploadImage/route.js",
-  "/page": "app/page.js"
+  "/page": "app/page.js",
+  "/api/generateImage/route": "app/api/generateImage/route.js"
 }

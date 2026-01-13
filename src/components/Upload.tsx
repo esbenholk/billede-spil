@@ -342,83 +342,136 @@ export function Upload() {
     setRemixLoading(true);
     setCollagedImage(null);
 
-    if (selectedImages.length > 1) {
-      try {
-        const descriptions: string[] = [];
-        const tags: string[] = [];
-        const ids: string[] = [];
-        const styles: string[] = [];
-        const communities: string[] = [];
-        const trends: string[] = [];
-        const people: string[] = [];
-        const objects: string[] = [];
+    if (selectedImages.length <= 1) {
+      setRemixLoading(false);
+      return;
+    }
 
-        for (const el of selectedImages) {
-          console.log("selected IMAGE:", el);
-          descriptions.push(el.description);
-          ids.push(el.url);
-          (el.tags || []).forEach((t) => tags.push(t));
-          if (el.aiStyle) styles.push(el.aiStyle);
-          if (el.community) communities.push(el.community);
-          if (el.aiTrend) trends.push(el.aiTrend);
+    try {
+      // lineage (keep what you already do)
+      const parentUrls = selectedImages.map((img) => img.url).filter(Boolean);
+      setSelectedParentIDs(parentUrls);
 
-          if (el.aiPeople) {
-            JSON.parse(el.aiPeople.toString()).forEach((t: any) =>
-              people.push(t)
-            );
-          }
+      // helper
+      const uniq = (arr: string[]) =>
+        Array.from(new Set(arr.filter(Boolean).map((s) => String(s).trim())));
 
-          if (el.aiObjects) objects.push(el.aiObjects);
-        }
+      // Build "parents" array in the new format
+      const parents = selectedImages.map((el) => {
+        // Prefer a single descriptor object if you store it
+        // e.g. el.ai (full object) or el.descriptor
+        const d = el.descriptor || el.ai || {};
 
-        // store the lineage
-        setSelectedParentIDs(ids);
+        // If your data is currently flat like el.aiStyle, el.aiObjects, etc.,
+        // map it into the new descriptor shape (best-effort).
+        const objects = Array.isArray(d.objects)
+          ? d.objects
+          : typeof el.aiObjects === "string"
+          ? el.aiObjects
+              .split(",")
+              .map((s: string) => s.trim())
+              .filter(Boolean)
+          : [];
 
-        // helpful de-dupe + trim
-        const uniq = (arr: string[]) =>
-          Array.from(new Set(arr.filter(Boolean).map((s) => s.trim())));
+        const vibe = Array.isArray(d.vibe)
+          ? d.vibe
+          : typeof el.aiVibe === "string"
+          ? el.aiVibe
+              .split(",")
+              .map((s: string) => s.trim())
+              .filter(Boolean)
+          : [];
 
-        setUploadExtras({
-          parentIds: ids,
-          remixedPrompt: descriptions.toString() || "",
-          tagsOverride: uniq(tags),
-        });
+        const people = Array.isArray(d.people)
+          ? d.people
+          : (() => {
+              // some of your older records store JSON string
+              if (!el.aiPeople) return [];
+              try {
+                const parsed =
+                  typeof el.aiPeople === "string"
+                    ? JSON.parse(el.aiPeople)
+                    : el.aiPeople;
+                return Array.isArray(parsed) ? parsed.map(String) : [];
+              } catch {
+                return [];
+              }
+            })();
 
-        const payload = {
-          // keep compatibility with existing server code
-          prompt: descriptions.join(", ") || "",
-          adjectives: uniq(tags).join(", "),
-          // new rich context
-          styles: styles.toString(),
-          communities: uniq(communities),
-          trends: uniq(trends),
-          descriptions, // full list
-          parentIds: ids, // so server can echo/store lineage
-          people: uniq(people),
+        const mustKeep = Array.isArray(d.must_keep)
+          ? d.must_keep
+          : uniq([
+              ...(objects.slice(0, 4) || []),
+              ...(vibe[0] ? [vibe[0]] : []),
+              ...(people[0] ? [people[0]] : []),
+            ]).slice(0, 8);
+
+        const descriptor = {
+          title: d.title || el.aiTitle || el.title || "",
+          description: d.description || el.description || "",
+          subject: d.subject || "",
+          setting: d.setting || "",
+          medium: d.medium || "",
+          realism: d.realism || "",
+          lighting: d.lighting || "",
+          palette: d.palette || "",
+          composition: d.composition || "",
+          style: d.style || el.aiStyle || "",
+          trend: d.trend || el.aiTrend || "",
+          feeling: d.feeling || el.aiFeeling || "",
+          objects,
+          vibe,
+          people,
+          must_keep: mustKeep,
         };
 
-        const response = await fetch(`/api/generateImage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        const data = await response.json();
+        return { url: el.url, descriptor };
+      });
 
-        console.log(data);
+      // tags/adjectives still useful (optional)
+      const tagWords = uniq(
+        selectedImages.flatMap((el) =>
+          (el.tags || []).map((t: any) => String(t))
+        )
+      );
 
-        setRemixedPrompt(data.remixedPrompt || "");
-        setText(data.remixedPrompt || "");
-        if (tags.length) setWords(uniq(tags));
+      // keep your uploader extras if you want
+      setUploadExtras({
+        parentIds: parentUrls,
+        remixedPrompt: tagWords.join(", "),
+        tagsOverride: tagWords,
+      });
 
-        if (!response.ok) throw new Error(data.error || "Generation failed");
-        setGeneratedImage(data.imageUrl);
-        setImage(data.imageUrl); // if you want the uploader preview populated too
-      } catch (err) {
-        setError("remix generation failed");
-      } finally {
-        setRemixLoading(false);
-      }
-    } else {
+      const payload = {
+        parents,
+        adjectives: tagWords.join(", "),
+        communities: uniq(
+          selectedImages.map((el) => el.community).filter(Boolean)
+        ),
+        trends: uniq(selectedImages.map((el) => el.aiTrend).filter(Boolean)),
+        extraPrompt: "", // optional UI field if you add it
+        size: "1024x1024",
+      };
+
+      const response = await fetch(`/api/generateImage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Remix failed");
+
+      setRemixedPrompt(data.remixedPrompt || "");
+      setText(data.remixedPrompt || "");
+      if (tagWords.length) setWords(tagWords);
+
+      setGeneratedImage(data.imageUrl);
+      setImage(data.imageUrl);
+    } catch (err) {
+      console.error(err);
+      setError("remix generation failed");
+    } finally {
       setRemixLoading(false);
     }
   };
