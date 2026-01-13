@@ -19,7 +19,7 @@ export async function GET(request: Request) {
   const skipNumber = 0;
   const limitNumber = 1000;
   const recentImagesResponse = await fetch(
-    `${process.env.BASE_URL}/api/cloudinary/recent?&limit=${encodeURIComponent(
+    `/api/cloudinary/recent?&limit=${encodeURIComponent(
       limitNumber
     )}&skip=${encodeURIComponent(skipNumber)}`
   );
