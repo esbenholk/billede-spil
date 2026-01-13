@@ -99,7 +99,7 @@ async function urlToFile(url: string, fallbackName: string): Promise<File> {
   return new File([buf], `${fallbackName}.${ext}`, { type: contentType });
 }
 
-export async function uploadB64ToCloudinary(b64: string) {
+async function uploadB64ToCloudinary(b64: string) {
   if (!b64 || typeof b64 !== "string") {
     throw new Error("Missing base64 image");
   }
