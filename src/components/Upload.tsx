@@ -145,19 +145,74 @@ export function Upload() {
           title: d.title,
           url: d.url,
           tags: d.tags,
+
+          // ✅ new: fill descriptor using the new Cloudinary context keys you save
+          descriptor: {
+            title: d.ai_title,
+            caption: d.ai_caption,
+            altText: d.alt,
+
+            so_me_type: d.ai_so_me_type,
+            trend: d.ai_trend,
+            feeling: d.ai_feeling,
+
+            subject: d.ai_subject,
+            setting: d.ai_setting,
+            medium: d.ai_medium,
+            realism: d.ai_realism,
+            lighting: d.ai_lighting,
+            palette: d.ai_palette,
+            composition: d.ai_composition,
+
+            style: d.ai_style,
+
+            // if you store these as strings in context, parse them here
+            vibe:
+              typeof d.ai_vibe === "string"
+                ? d.ai_vibe
+                    .split(",")
+                    .map((s: string) => s.trim())
+                    .filter(Boolean)
+                : [],
+            objects:
+              typeof d.ai_objects === "string"
+                ? d.ai_objects
+                    .split(",")
+                    .map((s: string) => s.trim())
+                    .filter(Boolean)
+                : [],
+            people:
+              typeof d.ai_people === "string"
+                ? d.ai_people
+                    .split(",")
+                    .map((s: string) => s.trim())
+                    .filter(Boolean)
+                : [],
+
+            must_keep:
+              typeof d.ai_must_keep === "string"
+                ? d.ai_must_keep
+                    .split(",")
+                    .map((s: string) => s.trim())
+                    .filter(Boolean)
+                : [],
+          },
+
+          // legacy fields (optional keep)
           aiCaption: d.caption,
           description: d.alt || "Untitled",
           aiTitle: d.ai_title,
           aiVibe: d.ai_vibe,
           aiObjects: d.ai_objects,
           aiFeeling: d.ai_feeling,
-          id: d.id,
-          community: d.community,
-          parentIds: d.parentIds,
           ai_so_me_type: d.aiSoMeType,
           aiStyle: d.aiStyle,
           aiTrend: d.aiTrend,
           aiPeople: d.aiPeople,
+
+          id: d.id,
+          community: d.community,
+          parentIds: d.parentIds,
         }));
 
         setNews((prev) => [...prev, ...mapped]);
@@ -360,7 +415,7 @@ export function Upload() {
       const parents = selectedImages.map((el) => {
         // Prefer a single descriptor object if you store it
         // e.g. el.ai (full object) or el.descriptor
-        const d = el.descriptor || el.ai || {};
+        const d = el.descriptor || {};
 
         // If your data is currently flat like el.aiStyle, el.aiObjects, etc.,
         // map it into the new descriptor shape (best-effort).
@@ -428,6 +483,8 @@ export function Upload() {
         return { url: el.url, descriptor };
       });
 
+      console.log(parents);
+
       // tags/adjectives still useful (optional)
       const tagWords = uniq(
         selectedImages.flatMap((el) =>
@@ -463,7 +520,7 @@ export function Upload() {
       if (!response.ok) throw new Error(data.error || "Remix failed");
 
       setRemixedPrompt(data.remixedPrompt || "");
-      setText(data.remixedPrompt || "");
+      setText(data.title || "");
       if (tagWords.length) setWords(tagWords);
 
       setGeneratedImage(data.imageUrl);

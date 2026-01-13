@@ -99,13 +99,19 @@ async function urlToFile(url: string, fallbackName: string): Promise<File> {
   return new File([buf], `${fallbackName}.${ext}`, { type: contentType });
 }
 
-async function uploadB64ToCloudinary(b64: string, folder = "imageEcology") {
-  const dataUri = `data:image/png;base64,${b64}`;
-  const uploaded = await cloudinary.uploader.upload(dataUri, {
-    folder,
-    resource_type: "image",
+async function uploadB64PngToCloudinary(b64: string, folder: string) {
+  const buffer = Buffer.from(b64, "base64");
+
+  return await new Promise<string>((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      { folder, resource_type: "image", format: "png" },
+      (err, result) => {
+        if (err || !result?.secure_url) return reject(err);
+        resolve(result.secure_url);
+      }
+    );
+    uploadStream.end(buffer);
   });
-  return uploaded.secure_url;
 }
 
 export async function POST(request: Request) {
@@ -174,6 +180,8 @@ export async function POST(request: Request) {
         anchors,
       };
     });
+
+    console.log("SUMMARIZES PARENTS", parentSummaries);
 
     // 3) Ask LLM for a *merged plan* (Structured Outputs), then render a final prompt
     const schema = {
@@ -329,6 +337,8 @@ export async function POST(request: Request) {
       .filter(Boolean)
       .join(" ");
 
+    console.log("has final prompt", finalPrompt);
+
     // 4) Image remix using multi-image edits (array syntax)
     const form = new FormData();
     form.append("model", "gpt-image-1.5");
@@ -357,6 +367,8 @@ export async function POST(request: Request) {
 
     const img = await res.json();
 
+    console.log("has image", img);
+
     const b64 = img.data?.[0]?.b64_json;
     if (!b64) {
       return NextResponse.json(
@@ -366,7 +378,10 @@ export async function POST(request: Request) {
     }
 
     // 5) Upload remix output to Cloudinary
-    const remixUrl = await uploadB64ToCloudinary(b64);
+    const remixUrl = await uploadB64PngToCloudinary(
+      b64,
+      "imageEcology/placeholders"
+    );
 
     return NextResponse.json({
       remixedPrompt: finalPrompt,
