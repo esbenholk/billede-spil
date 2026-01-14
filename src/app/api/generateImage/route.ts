@@ -150,6 +150,15 @@ export async function POST(request: Request) {
     const body = await request.json();
 
     console.log("POST REQ: body", body);
+    console.log(
+      "CLOUDINARY_CLOUD_NAME set?",
+      !!process.env.CLOUDINARY_CLOUD_NAME
+    );
+    console.log("CLOUDINARY_API_KEY set?", !!process.env.CLOUDINARY_API_KEY);
+    console.log(
+      "CLOUDINARY_API_SECRET set?",
+      !!process.env.CLOUDINARY_API_SECRET
+    );
 
     const {
       parents = [],
@@ -375,7 +384,7 @@ export async function POST(request: Request) {
     form.append("model", "gpt-image-1.5");
     form.append("prompt", finalPrompt);
     form.append("size", size || "1024x1024");
-    form.append("output_format", "png");
+    form.append("output_format", "jpg");
 
     // ✅ keep multi-image, but allow a softer influence by ordering:
     // Put the "base" first; others follow. (Many models implicitly bias earlier inputs.)
