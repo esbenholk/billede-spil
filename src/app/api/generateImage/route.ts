@@ -110,6 +110,43 @@ async function urlToFile(url: string, fallbackName: string): Promise<File> {
   return new File([buf], `${fallbackName}.${ext}`, { type: contentType });
 }
 
+async function uploadB64WithStream(
+  b64: string,
+  opts?: {
+    folder?: string;
+    title?: string;
+    parentIds?: string[] | string;
+    community?: string;
+    tags?: string[];
+  }
+) {
+  const buffer = Buffer.from(b64, "base64");
+
+  return await new Promise<string>((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder: opts?.folder ?? "imageEcology/placeholders",
+        resource_type: "image",
+        format: "png",
+        context: {
+          caption: opts?.title ?? "",
+          alt: opts?.title ?? "",
+          parentIds: opts?.parentIds != null ? String(opts.parentIds) : "",
+          community: opts?.community ?? "",
+        },
+        tags: opts?.tags?.join(",") ?? undefined,
+      },
+      (err, result) => {
+        if (err) return reject(err);
+        if (!result?.secure_url)
+          return reject(new Error("No secure_url from Cloudinary"));
+        resolve(result.secure_url);
+      }
+    );
+
+    stream.end(buffer);
+  });
+}
 async function uploadB64ToCloudinary(b64: string) {
   if (!b64 || typeof b64 !== "string") {
     throw new Error("Missing base64 image");
@@ -418,7 +455,8 @@ export async function POST(request: Request) {
     }
 
     // 5) Upload remix output to Cloudinary
-    const remixUrl = await uploadB64ToCloudinary(b64);
+    //const remixUrl = await uploadB64ToCloudinary(b64);
+    const remixUrl = await uploadB64WithStream(b64);
 
     console.log("uploaded to cloudinary temp folder", remixUrl);
 
