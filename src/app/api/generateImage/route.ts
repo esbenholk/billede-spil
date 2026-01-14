@@ -60,16 +60,6 @@ type RemixParent = {
   descriptor?: ParentDescriptor;
 };
 
-function getCloudinary() {
-  cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME!,
-    api_key: process.env.CLOUDINARY_API_KEY!,
-    api_secret: process.env.CLOUDINARY_API_SECRET!,
-    secure: true,
-    timeout: 120000, // helps on slow networks
-  });
-  return cloudinary;
-}
 
 function uniq(arr: string[]) {
   return Array.from(new Set(arr.map((s) => s.trim()).filter(Boolean)));
@@ -110,75 +100,64 @@ async function urlToFile(url: string, fallbackName: string): Promise<File> {
   return new File([buf], `${fallbackName}.${ext}`, { type: contentType });
 }
 
-async function uploadB64WithStream(
+function requireEnv(name: string) {
+  const v = process.env[name];
+  if (!v || !v.trim()) throw new Error(`Missing env var: ${name}`);
+  return v.trim();
+}
+
+function getCloudinary() {
+  cloudinary.config({
+    cloud_name: requireEnv("CLOUDINARY_CLOUD_NAME"),
+    api_key: requireEnv("CLOUDINARY_API_KEY"),
+    api_secret: requireEnv("CLOUDINARY_API_SECRET"),
+    secure: true,
+    timeout: 120000,
+  });
+  return cloudinary;
+}
+
+async function uploadB64ToCloudinary(
   b64: string,
-  opts?: {
-    folder?: string;
-    title?: string;
-    parentIds?: string[] | string;
-    community?: string;
-    tags?: string[];
-  }
+  opts?: { folder?: string; title?: string }
 ) {
-  const buffer = Buffer.from(b64, "base64");
+  if (!b64 || typeof b64 !== "string") throw new Error("Missing base64 image");
+
+  // If you ever pass data URLs, normalize:
+  const cleaned = b64.replace(/^data:image\/\w+;base64,/, "");
+  const buffer = Buffer.from(cleaned, "base64");
+
+  const cld = getCloudinary();
 
   return await new Promise<string>((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
+    const stream = cld.uploader.upload_stream(
       {
         folder: opts?.folder ?? "imageEcology/placeholders",
         resource_type: "image",
-        format: "png",
-        context: {
-          caption: opts?.title ?? "",
-          alt: opts?.title ?? "",
-          parentIds: opts?.parentIds != null ? String(opts.parentIds) : "",
-          community: opts?.community ?? "",
-        },
-        tags: opts?.tags?.join(",") ?? undefined,
+        // Let Cloudinary detect; or set "jpg" since OpenAI produced jpeg:
+        format: "jpg",
+        transformation: [{ quality: "auto" }, { fetch_format: "auto" }],
+        context: opts?.title
+          ? { caption: opts.title, alt: opts.title }
+          : undefined,
       },
       (err, result) => {
-        if (err) return reject(err);
+        if (err) {
+          // Cloudinary err often includes http_code + message
+          console.error("Cloudinary upload_stream error:", {
+            message: err.message,
+            http_code: (err as any).http_code,
+            name: err.name,
+          });
+          return reject(err);
+        }
         if (!result?.secure_url)
-          return reject(new Error("No secure_url from Cloudinary"));
+          return reject(new Error("Cloudinary returned no secure_url"));
         resolve(result.secure_url);
       }
     );
 
     stream.end(buffer);
-  });
-}
-async function uploadB64ToCloudinary(b64: string) {
-  if (!b64 || typeof b64 !== "string") {
-    throw new Error("Missing base64 image");
-  }
-
-  const buffer = Buffer.from(b64, "base64");
-  const cloudinary = getCloudinary();
-
-  return await new Promise<string>((resolve, reject) => {
-    const upload = cloudinary.uploader.upload_stream(
-      {
-        folder: "imageEcology/placeholders",
-        resource_type: "image",
-        format: "png",
-        transformation: [{ quality: "auto" }, { fetch_format: "auto" }],
-      },
-      (err, result) => {
-        if (err) {
-          console.error("Cloudinary error:", err);
-          return reject(err);
-        }
-
-        if (!result?.secure_url) {
-          console.error("Cloudinary returned no URL:", result);
-          return reject(new Error("Cloudinary returned no secure_url"));
-        }
-
-        resolve(result.secure_url);
-      }
-    );
-
-    upload.end(buffer);
   });
 }
 
@@ -456,7 +435,7 @@ export async function POST(request: Request) {
 
     // 5) Upload remix output to Cloudinary
     //const remixUrl = await uploadB64ToCloudinary(b64);
-    const remixUrl = await uploadB64WithStream(b64);
+    const remixUrl = await uploadB64ToCloudinary(b64);
 
     console.log("uploaded to cloudinary temp folder", remixUrl);
 
@@ -470,7 +449,12 @@ export async function POST(request: Request) {
   } catch (err: any) {
     console.error("Remix error:", err);
     return NextResponse.json(
-      { error: "Failed to remix images" },
+      {
+        error: "Failed to remix images",
+        message: err?.message ?? String(err),
+        cloudinary_http_code: err?.http_code,
+        name: err?.name,
+      },
       { status: 500 }
     );
   }
