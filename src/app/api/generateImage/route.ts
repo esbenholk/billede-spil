@@ -384,7 +384,7 @@ export async function POST(request: Request) {
     form.append("model", "gpt-image-1.5");
     form.append("prompt", finalPrompt);
     form.append("size", size || "1024x1024");
-    form.append("output_format", "jpg");
+    form.append("output_format", "jpeg");
 
     // ✅ keep multi-image, but allow a softer influence by ordering:
     // Put the "base" first; others follow. (Many models implicitly bias earlier inputs.)
