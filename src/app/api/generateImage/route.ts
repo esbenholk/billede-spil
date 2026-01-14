@@ -7,63 +7,32 @@ export const runtime = "nodejs";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-export interface GenerationResult {
-  sentence: string;
-  imageUrl: string;
-  trends: string[];
-  geo: string;
-}
-
-/** Helper: safe join */
-const join = (arr?: string[] | null, sep = ", ") =>
-  Array.isArray(arr)
-    ? arr
-        .filter(Boolean)
-        .map((s) => s.trim())
-        .join(sep)
-    : "";
-
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
-
 type ParentDescriptor = {
-  // Minimal
   title?: string;
   description?: string;
-
-  // New structured fields (recommended)
   subject?: string;
   setting?: string;
-  medium?: string; // "3D render" | "photograph" | "illustration" etc.
-  realism?: string; // "photorealistic" | "stylized" etc.
+  medium?: string;
+  realism?: string;
   lighting?: string;
   palette?: string;
   composition?: string;
-
-  // Existing fields you already have
   style?: string;
   vibe?: string[];
   objects?: string[];
   people?: string[];
   trend?: string;
   feeling?: string;
-
-  // Anchors
-  must_keep?: string[]; // 3–8 items that should survive the remix
+  must_keep?: string[];
 };
 
 type RemixParent = {
-  url: string; // Cloudinary URL or any public URL
+  url: string;
   descriptor?: ParentDescriptor;
 };
 
-
-function uniq(arr: string[]) {
-  return Array.from(new Set(arr.map((s) => s.trim()).filter(Boolean)));
-}
+const uniq = (arr: string[]) =>
+  Array.from(new Set(arr.filter(Boolean).map((s) => String(s).trim())));
 
 function buildAnchors(d: ParentDescriptor | undefined) {
   const objects = Array.isArray(d?.objects) ? d!.objects! : [];
@@ -71,175 +40,88 @@ function buildAnchors(d: ParentDescriptor | undefined) {
   const people = Array.isArray(d?.people) ? d!.people! : [];
   const mustKeep = Array.isArray(d?.must_keep) ? d!.must_keep! : [];
 
-  // Anchors: explicit must_keep first, then top objects + 1 vibe + 1 person cue
-  const anchors = uniq([
+  return uniq([
     ...mustKeep,
     ...objects.slice(0, 5),
     ...(vibe[0] ? [vibe[0]] : []),
     ...(people[0] ? [people[0]] : []),
   ]).slice(0, 10);
-
-  return anchors;
-}
-
-async function urlToFile(url: string, fallbackName: string): Promise<File> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch image: ${url} (${res.status})`);
-
-  const contentType = res.headers.get("content-type") || "image/jpeg";
-  const ext = contentType.includes("png")
-    ? "png"
-    : contentType.includes("webp")
-    ? "webp"
-    : "jpg";
-
-  const ab = await res.arrayBuffer();
-  const buf = Buffer.from(ab);
-
-  // Node 18+ has File/Blob
-  return new File([buf], `${fallbackName}.${ext}`, { type: contentType });
-}
-
-function requireEnv(name: string) {
-  const v = process.env[name];
-  if (!v || !v.trim()) throw new Error(`Missing env var: ${name}`);
-  return v.trim();
-}
-
-function getCloudinary() {
-  cloudinary.config({
-    cloud_name: requireEnv("CLOUDINARY_CLOUD_NAME"),
-    api_key: requireEnv("CLOUDINARY_API_KEY"),
-    api_secret: requireEnv("CLOUDINARY_API_SECRET"),
-    secure: true,
-    timeout: 120000,
-  });
-  return cloudinary;
-}
-
-async function uploadB64ToCloudinary(
-  b64: string,
-  opts?: { folder?: string; title?: string }
-) {
-  if (!b64 || typeof b64 !== "string") throw new Error("Missing base64 image");
-
-  // If you ever pass data URLs, normalize:
-  const cleaned = b64.replace(/^data:image\/\w+;base64,/, "");
-  const buffer = Buffer.from(cleaned, "base64");
-
-  const cld = getCloudinary();
-
-  return await new Promise<string>((resolve, reject) => {
-    const stream = cld.uploader.upload_stream(
-      {
-        folder: opts?.folder ?? "imageEcology/placeholders",
-        resource_type: "image",
-        // Let Cloudinary detect; or set "jpg" since OpenAI produced jpeg:
-        format: "jpg",
-        transformation: [{ quality: "auto" }, { fetch_format: "auto" }],
-        context: opts?.title
-          ? { caption: opts.title, alt: opts.title }
-          : undefined,
-      },
-      (err, result) => {
-        if (err) {
-          // Cloudinary err often includes http_code + message
-          console.error("Cloudinary upload_stream error:", {
-            message: err.message,
-            http_code: (err as any).http_code,
-            name: err.name,
-          });
-          return reject(err);
-        }
-        if (!result?.secure_url)
-          return reject(new Error("Cloudinary returned no secure_url"));
-        resolve(result.secure_url);
-      }
-    );
-
-    stream.end(buffer);
-  });
 }
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
 
-    console.log("POST REQ: body", body);
-    console.log(
-      "CLOUDINARY_CLOUD_NAME set?",
-      !!process.env.CLOUDINARY_CLOUD_NAME
-    );
-    console.log("CLOUDINARY_API_KEY set?", !!process.env.CLOUDINARY_API_KEY);
-    console.log(
-      "CLOUDINARY_API_SECRET set?",
-      !!process.env.CLOUDINARY_API_SECRET
-    );
-
     const {
+      // new
       parents = [],
       adjectives = "",
       communities = [],
       trends = [],
       extraPrompt = "",
-      size = "1024x1024",
+      remixStrength = 0.7,
 
-      // ✅ new “looseness” knobs (optional from frontend)
-      remixStrength = 0.65, // 0 (rigid) → 1 (very remixy)
-      anchorPerParent = "1-2", // "1-2" or "2" etc.
+      // legacy compatibility
+      descriptions = [],
+      styles = [],
+      people = [],
+      parentIds = [],
+      size = "1024x1024",
     }: {
-      parents: RemixParent[];
+      parents?: RemixParent[];
       adjectives?: string;
       communities?: string[];
       trends?: string[];
       extraPrompt?: string;
-      size?: "1024x1024" | "1536x1024" | "1024x1536" | "auto";
       remixStrength?: number;
-      anchorPerParent?: "1-2" | "2" | "2-3";
+
+      descriptions?: string[];
+      styles?: string[];
+      people?: string[];
+      parentIds?: string[];
+
+      size?: "1024x1024" | "1792x1024" | "1024x1792";
     } = body ?? {};
 
-    if (!Array.isArray(parents) || parents.length < 2) {
+    const strength = Math.max(0, Math.min(1, remixStrength));
+
+    // Support old callers: if parents missing, fabricate from descriptions
+    const normalizedParents: RemixParent[] =
+      Array.isArray(parents) && parents.length >= 2
+        ? parents
+        : (descriptions || []).map((d, i) => ({
+            url: parentIds?.[i] || "",
+            descriptor: { description: d },
+          }));
+
+    if (!Array.isArray(normalizedParents) || normalizedParents.length < 2) {
       return NextResponse.json(
         { error: "Provide at least 2 parents." },
         { status: 400 }
       );
     }
 
-    const strength = Math.max(0, Math.min(1, remixStrength));
-
-    // 1) Download parent images -> Files
-    const imageFiles: File[] = await Promise.all(
-      parents.slice(0, 16).map((p, i) => urlToFile(p.url, `parent-${i + 1}`))
-    );
-
-    // 2) Build per-parent anchor summaries (high signal)
-    const parentSummaries = parents.slice(0, 16).map((p, i) => {
+    // Build summaries with anchors
+    const parentSummaries = normalizedParents.slice(0, 10).map((p, i) => {
       const d = p.descriptor || {};
-      const anchors = buildAnchors(d);
-
       return {
         index: i + 1,
-        url: p.url,
+        description: d.description || "",
         subject: d.subject || "",
         setting: d.setting || "",
+        style: d.style || "",
         medium: d.medium || "",
         realism: d.realism || "",
         lighting: d.lighting || "",
         palette: d.palette || "",
         composition: d.composition || "",
-        vibe: Array.isArray(d.vibe) ? d.vibe : [],
-        people: Array.isArray(d.people) ? d.people : [],
-        objects: Array.isArray(d.objects) ? d.objects : [],
         trend: d.trend || "",
         feeling: d.feeling || "",
-        style: d.style || "",
-        anchors,
+        anchors: buildAnchors(d),
       };
     });
 
-    console.log("SUMMARIZES PARENTS", parentSummaries);
-
-    // 3) Ask LLM for a *merged plan* (Structured Outputs), then render a final prompt
+    // Ask LLM for a merged plan (looser + remixy)
     const schema = {
       name: "RemixPlan",
       strict: true,
@@ -268,7 +150,6 @@ export async function POST(request: Request) {
             minItems: 0,
             maxItems: 14,
           },
-          // ✅ new: give the model explicit “remix permission” in output too
           remix_directive: { type: "string" },
         },
         required: [
@@ -288,43 +169,22 @@ export async function POST(request: Request) {
       },
     } as const;
 
-    // ✅ NEW: creative remix rules + less rigid anchors + composition freedom
-    // We still ensure recognizability via must_include, but allow re-layout/fusion.
     const mergePrompt = [
-      `Create ONE coherent remix plan from multiple parent images.`,
-      ``,
-      `Remix intent (critical):`,
-      `- The output should feel like a NEW image inspired by the parents, not a faithful copy.`,
-      `- You are allowed to reinterpret, resize, relocate, fuse, or stylize elements from all parents.`,
-      `- Preserve recognizability, but not exact layout, camera angle, or proportions.`,
-      `- You MAY change composition, perspective, framing, scale, and staging for higher impact.`,
-      `- Prefer surprising, meme-forward recombinations while keeping it visually coherent.`,
-      ``,
-      `Anchor rules:`,
-      `- Include at least ${anchorPerParent} recognizable anchor items from EACH parent (use parentSummaries[*].anchors).`,
-      `- Anchors can appear as props, background motifs, wardrobe details, environment cues, or fused elements.`,
-      `- Do NOT just “list” anchors; integrate them naturally into the scene.`,
-      ``,
-      `Style rules:`,
-      `- Choose ONE dominant medium + realism; harmonize lighting/palette.`,
-      `- If parents conflict, blend them into a single aesthetic (do not enumerate styles).`,
-      ``,
-      `Output constraints:`,
-      `- Unify into a single world (no grid/collage).`,
-      `- Keep it social-media-friendly and visually striking.`,
-      `- No text, no watermark, no UI.`,
-      ``,
-      `Creative looseness:`,
-      `- remixStrength=${strength} where 0=faithful edit and 1=highly remixed.`,
-      `- At higher remixStrength, push more transformation and unexpected composition shifts.`,
-      ``,
+      `Create ONE coherent remix image prompt plan inspired by multiple parent descriptions.`,
+      `The output should feel like a NEW image inspired by the parents (not a literal collage).`,
+      `You may recompose, resize, fuse, and stylize elements for novelty.`,
+      `Include ~1–2 recognizable anchors from each parent summary.`,
+      `Unify into a single world; no grid/collage.`,
+      `Remix intensity remixStrength=${strength} (0 faithful → 1 wild).`,
+      `No text, watermark, UI.`,
+      "",
       `Context tags:`,
       adjectives ? `- vibe/tags: ${adjectives}` : "",
       communities?.length ? `- community: ${communities.join(", ")}` : "",
       trends?.length ? `- trends: ${trends.join(", ")}` : "",
       extraPrompt ? `- extra: ${extraPrompt}` : "",
       "",
-      `Parent summaries (anchors + style fields):`,
+      `Parent summaries:`,
       JSON.stringify(parentSummaries),
     ]
       .filter(Boolean)
@@ -332,129 +192,61 @@ export async function POST(request: Request) {
 
     const planResp = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-      temperature: 0.55, // ✅ slightly higher to encourage more novel recombination
+      temperature: 0.6,
       max_tokens: 650,
       response_format: { type: "json_schema", json_schema: schema },
       messages: [
         {
           role: "system",
           content:
-            "Return only JSON matching the schema. Prefer concrete visual anchors. Keep the plan remixy, not literal. Use remixStrength to decide how bold to be.",
+            "Return only JSON matching the schema. Keep it remixy and visual. Integrate anchors naturally rather than listing them.",
         },
         { role: "user", content: mergePrompt },
       ],
     });
 
-    const planRaw = planResp.choices[0]?.message?.content ?? "{}";
-    const plan = JSON.parse(planRaw) as {
-      scene: string;
-      subject: string;
-      setting: string;
-      composition: string;
-      medium: string;
-      realism: string;
-      lighting: string;
-      palette: string;
-      style_notes: string;
-      must_include: string[];
-      avoid: string[];
-      remix_directive: string;
-    };
+    const plan = JSON.parse(planResp.choices[0]?.message?.content ?? "{}");
 
-    // ✅ NEW: bake in “remix permission” directly into the final prompt
-    // Also: scale the language based on remixStrength.
     const remixLine =
-      strength >= 0.8
-        ? "Highly remixed reinterpretation with bold recomposition and surprising fusions."
-        : strength >= 0.5
-        ? "Creative remix reinterpretation; allow recomposition, scale shifts, and fused elements."
-        : "Light remix; small but noticeable rearrangements and stylized integrations.";
+      strength >= 0.85
+        ? "Highly remixed reinterpretation, bold recomposition, surprising fusions."
+        : strength >= 0.55
+        ? "Creative remix reinterpretation, allow recomposition and scale shifts."
+        : "Light remix, subtle rearrangements and stylized integrations.";
 
     const finalPrompt = [
-      // Core
       `${plan.scene}. ${plan.subject}. ${plan.setting}.`,
-      // Remix directive (important for the image model)
       remixLine,
       plan.remix_directive ? plan.remix_directive : "",
-      // Visual control (but not too rigid)
       `Composition: ${plan.composition}.`,
       `Medium: ${plan.medium}, realism: ${plan.realism}.`,
       `Lighting: ${plan.lighting}. Palette: ${plan.palette}.`,
       plan.style_notes ? `Style: ${plan.style_notes}.` : "",
-      // Anchors
-      `Must include (integrated naturally): ${uniq(plan.must_include).join(
-        ", "
-      )}.`,
+      `Must include: ${uniq(plan.must_include || []).join(", ")}.`,
       plan.avoid?.length ? `Avoid: ${uniq(plan.avoid).join(", ")}.` : "",
-      // Universal constraints
-      `No text, no watermark, no UI, no logos, no signatures.`,
-      `Square image.`,
+      `Square image. No text, no watermark, no UI, no logos, no signatures.`,
     ]
       .filter(Boolean)
       .join(" ");
 
-    console.log("has final prompt", finalPrompt);
-
-    // 4) Image remix using multi-image edits (array syntax)
-    const form = new FormData();
-    form.append("model", "gpt-image-1.5");
-    form.append("prompt", finalPrompt);
-    form.append("size", size || "1024x1024");
-    form.append("output_format", "jpeg");
-
-    // ✅ keep multi-image, but allow a softer influence by ordering:
-    // Put the "base" first; others follow. (Many models implicitly bias earlier inputs.)
-    for (let i = 0; i < imageFiles.length; i++) {
-      form.append("image[]", imageFiles[i]);
-    }
-
-    const res = await fetch("https://api.openai.com/v1/images/edits", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      },
-      body: form,
+    // ✅ DALL·E 3 generation returns a URL
+    const image = await openai.images.generate({
+      model: "dall-e-3",
+      prompt: finalPrompt,
+      n: 1,
+      size,
     });
-
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`OpenAI image edit failed: ${err}`);
-    }
-
-    const img = await res.json();
-
-    console.log("has image", img);
-
-    const b64 = img.data?.[0]?.b64_json;
-    if (!b64) {
-      return NextResponse.json(
-        { error: "No image returned." },
-        { status: 500 }
-      );
-    }
-
-    // 5) Upload remix output to Cloudinary
-    //const remixUrl = await uploadB64ToCloudinary(b64);
-    const remixUrl = await uploadB64ToCloudinary(b64);
-
-    console.log("uploaded to cloudinary temp folder", remixUrl);
 
     return NextResponse.json({
       remixedPrompt: finalPrompt,
       plan,
-      remixStrength: strength,
-      imageUrl: remixUrl,
-      parentUrls: parents.map((p) => p.url),
+      imageUrl: image.data?.[0]?.url ?? null,
+      parentUrls: normalizedParents.map((p) => p.url).filter(Boolean),
     });
-  } catch (err: any) {
-    console.error("Remix error:", err);
+  } catch (error) {
+    console.error("Generation error (POST):", error);
     return NextResponse.json(
-      {
-        error: "Failed to remix images",
-        message: err?.message ?? String(err),
-        cloudinary_http_code: err?.http_code,
-        name: err?.name,
-      },
+      { error: "Failed to generate content" },
       { status: 500 }
     );
   }
