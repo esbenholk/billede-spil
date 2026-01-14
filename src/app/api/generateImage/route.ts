@@ -60,6 +60,17 @@ type RemixParent = {
   descriptor?: ParentDescriptor;
 };
 
+function getCloudinary() {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME!,
+    api_key: process.env.CLOUDINARY_API_KEY!,
+    api_secret: process.env.CLOUDINARY_API_SECRET!,
+    secure: true,
+    timeout: 120000, // helps on slow networks
+  });
+  return cloudinary;
+}
+
 function uniq(arr: string[]) {
   return Array.from(new Set(arr.map((s) => s.trim()).filter(Boolean)));
 }
@@ -105,6 +116,7 @@ async function uploadB64ToCloudinary(b64: string) {
   }
 
   const buffer = Buffer.from(b64, "base64");
+  const cloudinary = getCloudinary();
 
   return await new Promise<string>((resolve, reject) => {
     const upload = cloudinary.uploader.upload_stream(
